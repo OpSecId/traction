@@ -97,3 +97,5 @@ Pending entries flip to Active once the witness attestation completes. If an ent
 - Explore the didwebvh-ts project (under `../didwebvh-ts`) for utilities to publish witness statements or host verified history documents.
 
 Happy configuring!
+
+

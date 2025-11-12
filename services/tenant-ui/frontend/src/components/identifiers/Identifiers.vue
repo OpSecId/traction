@@ -15,24 +15,10 @@
       >
         <div class="config-warning-content">
           <p class="mb-2">
-            {{ $t('identifiers.webvh.configureDescription') }}
-          </p>
-          <div class="config-actions">
-            <Button
-              type="button"
-              icon="pi pi-cog"
-              class="p-button-sm"
-              :label="$t('identifiers.webvh.configureButton')"
-              :disabled="!canConfigureWebvh || configuringWebvh"
-              :loading="configuringWebvh"
-              @click="configureWebvh()"
-            />
-            <span v-if="!canConfigureWebvh" class="text-muted">
-              {{ $t('identifiers.webvh.configureMissingUrl') }}
-            </span>
-          </div>
-          <p v-if="autoConfigureFailed" class="mt-2 config-warning-error">
-            {{ $t('identifiers.webvh.autoConfigureFailed') }}
+            {{ $t('identifiers.webvh.connectEndorserPrompt') }}
+            <RouterLink :to="{ name: 'Profile' }" class="config-warning-link">
+              {{ $t('identifiers.webvh.connectEndorserLink') }}
+            </RouterLink>
           </p>
         </div>
       </Message>
@@ -58,6 +44,7 @@
                 icon="pi pi-plus"
                 :label="$t('identifiers.webvh.createButton')"
                 class="p-button"
+                :disabled="needsWebvhConfig || !availableWebvhServers.length"
                 @click="openCreateDialog"
               />
             </div>
@@ -145,9 +132,9 @@
             </small>
           </div>
           <div class="field">
-            <label for="dialog-namespace">{{
-              $t('identifiers.webvh.namespace')
-            }}</label>
+            <label for="dialog-namespace">
+              {{ $t('identifiers.webvh.namespace') }}
+            </label>
             <InputText
               id="dialog-namespace"
               v-model.trim="newDidNamespace"
@@ -179,28 +166,29 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watchEffect } from 'vue';
-import type { ServerConfig } from '@/types';
+import { RouterLink } from 'vue-router';
+import { useI18n } from 'vue-i18n';
+import { storeToRefs } from 'pinia';
+import { useToast } from 'vue-toastification';
 import Button from 'primevue/button';
 import Column from 'primevue/column';
 import DataTable from 'primevue/datatable';
-import InputText from 'primevue/inputtext';
-import Dropdown from 'primevue/dropdown';
-import ProgressSpinner from 'primevue/progressspinner';
 import Dialog from 'primevue/dialog';
+import Dropdown from 'primevue/dropdown';
 import IconField from 'primevue/iconfield';
 import InputIcon from 'primevue/inputicon';
-import { FilterMatchMode } from 'primevue/api';
-import { useToast } from 'vue-toastification';
-import { useI18n } from 'vue-i18n';
-import MainCardContent from '@/components/layout/mainCard/MainCardContent.vue';
-import { useTenantStore } from '@/store';
-import { storeToRefs } from 'pinia';
-import { useAcapyApi } from '@/store/acapyApi';
-import { API_PATH, TABLE_OPT } from '@/helpers/constants';
+import InputText from 'primevue/inputtext';
 import Message from 'primevue/message';
+import ProgressSpinner from 'primevue/progressspinner';
+import { FilterMatchMode } from 'primevue/api';
+import MainCardContent from '@/components/layout/mainCard/MainCardContent.vue';
+import { API_PATH, TABLE_OPT } from '@/helpers/constants';
+import { useAcapyApi } from '@/store/acapyApi';
+import { useTenantStore } from '@/store';
+import type { ServerConfig } from '@/types';
 
-const toast = useToast();
 const { t } = useI18n();
+const toast = useToast();
 const tenantStore = useTenantStore();
 const acapyApi = useAcapyApi();
 const { tenantWallet, loading, serverConfig } = storeToRefs(tenantStore);
@@ -216,9 +204,6 @@ const webvhConfigLoaded = ref(false);
 const didTableFilters = ref({
   global: { value: '', matchMode: FilterMatchMode.CONTAINS },
 });
-const configuringWebvh = ref(false);
-const autoConfigureAttempted = ref(false);
-const autoConfigureFailed = ref(false);
 
 const serverConfigValue = computed<ServerConfig | null>(() => {
   const value = serverConfig.value as ServerConfig | undefined;
@@ -290,19 +275,6 @@ const webvhConfig = computed<any | null>(() => {
   };
 });
 
-const webvhWatchers = computed(() => {
-  if (!webvhConfig.value) return [] as string[];
-  const witnesses = webvhConfig.value.witnesses;
-  const watchers = webvhConfig.value.watchers;
-  if (Array.isArray(witnesses) && witnesses.length) {
-    return witnesses;
-  }
-  if (Array.isArray(watchers) && watchers.length) {
-    return watchers;
-  }
-  return [] as string[];
-});
-
 const hasWebvhConfig = computed(() => {
   const cfg = webvhConfig.value;
   if (!cfg) {
@@ -311,10 +283,6 @@ const hasWebvhConfig = computed(() => {
   const witnesses = cfg.witnesses ?? cfg.watchers;
   const hasWitnesses = Array.isArray(witnesses) && witnesses.length > 0;
   return Boolean(cfg.server_url && hasWitnesses);
-});
-
-const canConfigureWebvh = computed(() => {
-  return Boolean(serverWebvhConfig.value?.server_url);
 });
 
 const needsWebvhConfig = computed(() => !hasWebvhConfig.value);
@@ -360,6 +328,9 @@ const canCreateDid = computed(
 );
 
 const openCreateDialog = () => {
+  if (needsWebvhConfig.value || !availableWebvhServers.value.length) {
+    return;
+  }
   createFormTouched.value = false;
   if (!newDidNamespace.value) {
     newDidNamespace.value = 'default';
@@ -374,6 +345,9 @@ const closeCreateDialog = () => {
 const resetCreateForm = () => {
   newDidAlias.value = '';
   newDidNamespace.value = 'default';
+  selectedWebvhServer.value = availableWebvhServers.value.length
+    ? availableWebvhServers.value[0].value
+    : null;
   createFormTouched.value = false;
 };
 
@@ -394,60 +368,10 @@ const loadWebvhConfig = async () => {
       !configData ||
       (typeof configData === 'object' && Object.keys(configData).length === 0);
     webvhConfigData.value = isEmptyConfig ? null : configData;
-    if (needsWebvhConfig.value && !autoConfigureAttempted.value) {
-      autoConfigureAttempted.value = true;
-      const configured = await configureWebvh(true);
-      if (configured) {
-        await loadWebvhConfig();
-        return;
-      }
-    } else {
-      autoConfigureAttempted.value = true;
-    }
   } catch (_error) {
     webvhConfigData.value = null;
   } finally {
     webvhConfigLoaded.value = true;
-  }
-};
-
-const configureWebvh = async (auto = false) => {
-  if (!auto) {
-    configuringWebvh.value = true;
-  }
-  try {
-    const result = await tenantStore.configureWebvhPlugin({ auto });
-    if (!result.success) {
-      autoConfigureFailed.value = true;
-      if (!auto && 'reason' in result) {
-        const failureMessage =
-          result.reason === 'missing_witnesses'
-            ? t('identifiers.webvh.witnessMissing')
-            : t('identifiers.webvh.configureMissingUrl');
-        toast.error(failureMessage as string);
-      }
-      return false;
-    }
-    autoConfigureFailed.value = false;
-    if (!auto) {
-      toast.success(t('identifiers.webvh.configureSuccess') as string);
-      await loadWebvhConfig();
-    }
-    return true;
-  } catch (error: any) {
-    autoConfigureFailed.value = true;
-    if (!auto) {
-      toast.error(
-        `Failed to configure webvh: ${
-          error?.response?.data?.message ?? JSON.stringify(error ?? {})
-        }`
-      );
-    }
-    return false;
-  } finally {
-    if (!auto) {
-      configuringWebvh.value = false;
-    }
   }
 };
 
@@ -477,12 +401,7 @@ const createDid = async () => {
     const options: Record<string, any> = {
       identifier: alias,
       namespace,
-      server_url: selectedWebvhServer.value,
     };
-    if (webvhWatchers.value.length) {
-      options.watchers = webvhWatchers.value;
-      options.witnesses = webvhWatchers.value;
-    }
 
     const response = await acapyApi.postHttp(API_PATH.DID_WEBVH_CREATE, {
       options,
@@ -526,45 +445,6 @@ onMounted(async () => {
 </script>
 
 <style scoped lang="scss">
-.wallet-type-check {
-  padding: 1rem 0;
-}
-
-.webvh-section {
-  display: flex;
-  flex-direction: column;
-}
-
-.webvh-row {
-  display: flex;
-  margin-bottom: 0.75rem;
-
-  .label {
-    min-width: 9rem;
-    font-weight: 600;
-  }
-
-  .value {
-    flex: 1;
-    word-break: break-word;
-  }
-
-  .icon {
-    display: inline-flex;
-    align-items: center;
-  }
-}
-
-.create-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-
-  .field {
-    min-width: 14rem;
-  }
-}
-
 .status-chip {
   display: inline-flex;
   align-items: center;
@@ -587,15 +467,9 @@ onMounted(async () => {
   gap: 0.5rem;
 }
 
-.config-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.config-warning-error {
-  color: $tenant-ui-text-danger;
+.config-warning-link {
+  margin-left: 0.25rem;
+  font-weight: 600;
 }
 
 .table-header {
